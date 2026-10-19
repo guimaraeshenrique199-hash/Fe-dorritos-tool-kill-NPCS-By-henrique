@@ -1,0 +1,462 @@
+
+--========================================================--
+--          🌮 DORITOS VOADOR - Script 2026❗️
+--                 🧱by henrique☢️
+--========================================================--
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local backpack = player:WaitForChild("Backpack")
+
+-- ⚙️ CONFIGURAÇÕES
+local ASSET_ID = 3420995096
+local DORITOS_IMAGE = "rbxassetid://74148139637300"
+local DANO_NO_NPC = 20
+
+local MUSIC_IDS = {
+    "rbxassetid://130363373001396",
+    "rbxassetid://122180189312589",
+    "rbxassetid://121351852050830",
+    "rbxassetid://133030775976421"
+}
+
+local TOOL_NAME = "Doritos"
+local SPEED = 40
+local RANGE = 50
+local COOLDOWN = 0.8
+
+local PROJECTILE_SIZE = Vector3.new(2.5, 2.5, 0.35)
+
+local equipped = false
+local busy = false
+local currentTool
+local toolConnections = {}
+
+--========================================================--
+-- VERIFICAR SE É JOGADOR
+--========================================================--
+
+local function isPlayerCharacter(model)
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character == model then
+            return true
+        end
+    end
+
+    return false
+end
+
+--========================================================--
+-- MÚSICA ALEATÓRIA AO ACERTAR NPC
+--========================================================--
+
+local function tocarMusicaNPC()
+    local sound = Instance.new("Sound")
+    sound.Name = "DoritosHitMusic"
+    sound.SoundId = MUSIC_IDS[math.random(1, #MUSIC_IDS)]
+    sound.Volume = 1
+    sound.Parent = Workspace
+    sound:Play()
+
+    sound.Ended:Connect(function()
+        sound:Destroy()
+    end)
+
+    task.delay(30, function()
+        if sound.Parent then
+            sound:Destroy()
+        end
+    end)
+end
+
+--========================================================--
+-- APLICAR DANO LOCAL AO NPC
+--========================================================--
+
+local function aplicarDanoNoNPC(hitPart)
+    local model = hitPart:FindFirstAncestorOfClass("Model")
+    if not model then
+        return false
+    end
+
+    if isPlayerCharacter(model) then
+        return false
+    end
+
+    local humanoid = model:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then
+        return false
+    end
+
+    humanoid.Health = math.max(0, humanoid.Health - DANO_NO_NPC)
+    return true
+end
+
+--========================================================--
+-- LOCALIZAR E CARREGAR TOOL
+--========================================================--
+
+local function findTool()
+    local character = player.Character
+
+    if character then
+        local tool = character:FindFirstChild(TOOL_NAME)
+        if tool and tool:IsA("Tool") then
+            return tool
+        end
+    end
+
+    local tool = backpack:FindFirstChild(TOOL_NAME)
+    if tool and tool:IsA("Tool") then
+        return tool
+    end
+
+    return nil
+end
+
+local function loadDoritos()
+    local existing = findTool()
+    if existing then
+        return existing
+    end
+
+    local ok, objects = pcall(function()
+        return game:GetObjects("rbxassetid://" .. ASSET_ID)
+    end)
+
+    if not ok or not objects or not objects[1] then
+        warn("Doritos: não foi possível carregar o asset.")
+        return nil
+    end
+
+    local container = objects[1]
+    local tool
+
+    if container:IsA("Tool") then
+        tool = container
+    else
+        tool = container:FindFirstChildWhichIsA("Tool", true)
+    end
+
+    if not tool then
+        warn("Doritos: o asset não contém uma Tool.")
+        container:Destroy()
+        return nil
+    end
+
+    tool.Name = TOOL_NAME
+    tool.Parent = backpack
+
+    if container ~= tool then
+        container:Destroy()
+    end
+
+    return tool
+end
+
+--========================================================--
+-- GUI MOBILE
+--========================================================--
+
+local oldGui = playerGui:FindFirstChild("DoritosVoador")
+if oldGui then
+    oldGui:Destroy()
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "DoritosVoador"
+gui.ResetOnSpawn = false
+gui.Parent = playerGui
+
+local button = Instance.new("ImageButton")
+button.Name = "DoritosButton"
+button.AnchorPoint = Vector2.new(1, 0.5)
+button.Position = UDim2.new(1, -22, 0.58, 0)
+button.Size = UDim2.fromOffset(76, 76)
+button.BackgroundColor3 = Color3.fromRGB(255, 125, 0)
+button.BackgroundTransparency = 0.05
+button.Image = DORITOS_IMAGE
+button.ScaleType = Enum.ScaleType.Fit
+button.AutoButtonColor = false
+button.Visible = false
+button.Parent = gui
+
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(1, 0)
+buttonCorner.Parent = button
+
+local buttonStroke = Instance.new("UIStroke")
+buttonStroke.Color = Color3.fromRGB(255, 220, 120)
+buttonStroke.Thickness = 3
+buttonStroke.Parent = button
+
+--========================================================--
+-- PROJÉTIL COM HITBOX INVISÍVEL
+--========================================================--
+
+local function launchDoritos(origin, direction)
+    local hitbox = Instance.new("Part")
+    hitbox.Name = "DoritosHitbox"
+    hitbox.Size = PROJECTILE_SIZE
+    hitbox.Transparency = 1
+    hitbox.Anchored = true
+    hitbox.CanCollide = false
+    hitbox.CanTouch = false
+    hitbox.CanQuery = false
+    hitbox.CastShadow = false
+    hitbox.CFrame = CFrame.new(origin)
+    hitbox.Parent = Workspace
+
+    local visual = Instance.new("Part")
+    visual.Name = "DoritosVisual"
+    visual.Size = Vector3.new(2.5, 2.5, 0.05)
+    visual.Transparency = 1
+    visual.Anchored = true
+    visual.CanCollide = false
+    visual.CanTouch = false
+    visual.CanQuery = false
+    visual.CastShadow = false
+    visual.CFrame = CFrame.new(origin)
+    visual.Parent = Workspace
+
+    -- Imagem na frente e atrás
+    for _, face in ipairs({
+        Enum.NormalId.Front,
+        Enum.NormalId.Back
+    }) do
+        local surface = Instance.new("SurfaceGui")
+        surface.Name = "DoritosSurface"
+        surface.Face = face
+        surface.AlwaysOnTop = true
+        surface.LightInfluence = 0
+        surface.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+        surface.PixelsPerStud = 100
+        surface.Parent = visual
+
+        local image = Instance.new("ImageLabel")
+        image.Name = "DoritosImage"
+        image.Size = UDim2.fromScale(1, 1)
+        image.BackgroundTransparency = 1
+        image.Image = DORITOS_IMAGE
+        image.ScaleType = Enum.ScaleType.Fit
+        image.Parent = surface
+    end
+
+    local jaAcertou = false
+    local elapsed = 0
+    local connection
+
+    -- Detecta acertos com consultas espaciais a cada quadro.
+    -- Funciona melhor que Touched para uma peça ancorada movida por CFrame.
+    local overlapParams = OverlapParams.new()
+    overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+
+    local excluded = {hitbox, visual}
+    if player.Character then
+        table.insert(excluded, player.Character)
+    end
+    overlapParams.FilterDescendantsInstances = excluded
+
+    connection = RunService.RenderStepped:Connect(function(dt)
+        if jaAcertou or not hitbox.Parent or not visual.Parent then
+            connection:Disconnect()
+            return
+        end
+
+        elapsed += dt
+
+        local traveled = math.min(elapsed * SPEED, RANGE)
+        local position = origin + direction * traveled
+
+        local rotation = CFrame.Angles(
+            elapsed * 7,
+            elapsed * 12,
+            elapsed * 9
+        )
+
+        local cf = CFrame.lookAt(position, position + direction) * rotation
+
+        hitbox.CFrame = cf
+        visual.CFrame = cf
+
+        -- Verifica peças dentro da hitbox invisível
+        local parts = Workspace:GetPartBoundsInBox(
+            hitbox.CFrame,
+            hitbox.Size,
+            overlapParams
+        )
+
+        for _, part in ipairs(parts) do
+            local model = part:FindFirstAncestorOfClass("Model")
+
+            if model and not isPlayerCharacter(model) then
+                local humanoid = model:FindFirstChildOfClass("Humanoid")
+
+                if humanoid and humanoid.Health > 0 then
+                    if aplicarDanoNoNPC(part) then
+                        jaAcertou = true
+
+                        tocarMusicaNPC()
+
+                        connection:Disconnect()
+                        hitbox:Destroy()
+                        visual:Destroy()
+                        return
+                    end
+                end
+            end
+        end
+
+        if traveled >= RANGE then
+            connection:Disconnect()
+            hitbox:Destroy()
+            visual:Destroy()
+        end
+    end)
+end
+
+--========================================================--
+-- EQUIPAMENTO
+--========================================================--
+
+local function disconnectToolConnections()
+    for _, conn in ipairs(toolConnections) do
+        conn:Disconnect()
+    end
+
+    table.clear(toolConnections)
+end
+
+local function updateEquipped()
+    local character = player.Character
+
+    equipped = character ~= nil
+        and currentTool ~= nil
+        and currentTool.Parent == character
+
+    button.Visible = equipped
+end
+
+local function watchTool(tool)
+    if not tool:IsA("Tool") or tool.Name ~= TOOL_NAME then
+        return
+    end
+
+    if currentTool == tool then
+        updateEquipped()
+        return
+    end
+
+    currentTool = tool
+
+    table.insert(toolConnections, tool.Equipped:Connect(updateEquipped))
+    table.insert(toolConnections, tool.Unequipped:Connect(updateEquipped))
+    table.insert(toolConnections, tool.AncestryChanged:Connect(updateEquipped))
+
+    updateEquipped()
+end
+
+local function setupCharacter(character)
+    disconnectToolConnections()
+
+    currentTool = nil
+    equipped = false
+    button.Visible = false
+
+    for _, item in ipairs(backpack:GetChildren()) do
+        watchTool(item)
+    end
+
+    for _, item in ipairs(character:GetChildren()) do
+        watchTool(item)
+    end
+
+    table.insert(toolConnections, backpack.ChildAdded:Connect(watchTool))
+    table.insert(toolConnections, character.ChildAdded:Connect(watchTool))
+
+    table.insert(toolConnections, character.ChildRemoved:Connect(function(item)
+        if item == currentTool then
+            updateEquipped()
+        end
+    end))
+end
+
+--========================================================--
+-- LANÇAR DORITOS
+--========================================================--
+
+button.Activated:Connect(function()
+    if busy or not equipped then
+        return
+    end
+
+    local character = player.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local camera = Workspace.CurrentCamera
+
+    if not root or not camera or not currentTool then
+        return
+    end
+
+    if currentTool.Parent ~= character then
+        updateEquipped()
+        return
+    end
+
+    busy = true
+
+    TweenService:Create(
+        button,
+        TweenInfo.new(0.08),
+        {Size = UDim2.fromOffset(66, 66)}
+    ):Play()
+
+    task.delay(0.1, function()
+        if button.Parent then
+            TweenService:Create(
+                button,
+                TweenInfo.new(0.1),
+                {Size = UDim2.fromOffset(76, 76)}
+            ):Play()
+        end
+    end)
+
+    local viewport = camera.ViewportSize
+    local ray = camera:ViewportPointToRay(
+        viewport.X / 2,
+        viewport.Y / 2
+    )
+
+    local direction = ray.Direction.Unit
+    local origin = root.Position
+        + Vector3.new(0, 1.5, 0)
+        + root.CFrame.LookVector * 3
+
+    launchDoritos(origin, direction)
+
+    task.delay(COOLDOWN, function()
+        busy = false
+        updateEquipped()
+    end)
+end)
+
+--========================================================--
+-- INICIALIZAÇÃO
+--========================================================--
+
+player.CharacterAdded:Connect(function(character)
+    task.wait(0.5)
+    loadDoritos()
+    setupCharacter(character)
+end)
+
+loadDoritos()
+
+if player.Character then
+    setupCharacter(player.Character)
+end
